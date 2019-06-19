@@ -1,18 +1,64 @@
 use std::cmp::Ordering;
 use byteorder::{BigEndian, WriteBytesExt};
 
+/// convertion methods for slice of `Update`s
+pub trait UpdateVecConvert {
+    /// convert into json
+    fn as_json(&self) -> String;
+    /// convert into csv
+    fn as_csv(&self) -> String;
+}
+
+impl UpdateVecConvert for [Update] {
+    fn as_json(&self) -> String {
+        update_vec_to_json(self)
+    }
+    fn as_csv(&self) -> String {
+        update_vec_to_csv(&self)
+    }
+}
+
+impl UpdateVecConvert for Vec<Update> {
+    fn as_json(&self) -> String {
+        update_vec_to_json(self)
+    }
+    fn as_csv(&self) -> String {
+        update_vec_to_csv(&self)
+    }
+}
+
+
+fn update_vec_to_csv(vecs: &[Update]) -> String {
+    let objects: Vec<String> = vecs.into_iter().map(|up| up.as_csv()).collect();
+    objects.join("\n")
+}
+
+fn update_vec_to_json(vecs: &[Update]) -> String {
+    let objects: Vec<String> = vecs.into_iter().map(|up| up.as_json()).collect();
+    objects.join(", ")
+}
+
+
+/// Represents an L2 orderbook update
 #[repr(C)]
 #[derive(Debug, Clone, PartialEq, Copy, Serialize, Deserialize)]
 pub struct Update {
+    /// time stamp
     pub ts: u64,
+    /// sequence number
     pub seq: u32,
+    /// is the update for a trade
     pub is_trade: bool,
+    /// is the update on the bid or ask side
     pub is_bid: bool,
+    /// price of the order
     pub price: f32,
+    /// size of the order
     pub size: f32,
 }
 
 impl Update {
+    /// Serialize to bytearray
     pub fn serialize(&self, ref_ts: u64, ref_seq: u32) -> Vec<u8> {
         if self.seq < ref_seq {
             println!("{:?}", ref_seq);
@@ -38,7 +84,8 @@ impl Update {
         buf
     }
 
-    pub fn to_json(&self) -> String {
+    /// Convert to json string
+    pub fn as_json(&self) -> String {
         format!(
             r#"{{"ts":{},"seq":{},"is_trade":{},"is_bid":{},"price":{},"size":{}}}"#,
             (self.ts as f64) / 1000_f64,
@@ -50,7 +97,8 @@ impl Update {
         )
     }
 
-    pub fn to_csv(&self) -> String {
+    /// Convert to csv string
+    pub fn as_csv(&self) -> String {
         format!(
             r#"{},{},{},{},{},{}"#,
             (self.ts as f64) / 1000_f64,
@@ -85,16 +133,20 @@ impl Ord for Update {
 
 impl Eq for Update {}
 
-
 bitflags! {
+    /// tightly packed bitflag representation of boolean values in the update struct
     pub struct Flags: u8 {
+        /// empty
         const FLAG_EMPTY   = 0b0000_0000;
+        /// update.is_bid
         const FLAG_IS_BID   = 0b0000_0001;
+        /// update.is_trade
         const FLAG_IS_TRADE = 0b0000_0010;
     }
 }
 
 impl Flags {
+    /// convert to bool
     pub fn to_bool(&self) -> bool {
         (self.bits == 0b0000_0001) || (self.bits == 0b0000_0010)
     }

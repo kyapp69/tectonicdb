@@ -15,46 +15,63 @@ use std::str;
 use std::sync::{Arc, RwLock};
 use std::process::exit;
 
-use state::{Global, SharedState, ThreadState};
-use handler::ReturnType;
-use libtectonic::dtf::{Update, UpdateVecInto};
-use utils;
-use handler;
-use plugins::run_plugins;
-use settings::Settings;
+use libtectonic::dtf::update::{Update, UpdateVecConvert};
+use crate::state::{Global, SharedState, ThreadState, HashMapStore};
+use crate::handler::ReturnType;
+use crate::utils;
+use crate::handler;
+use crate::plugins::{run_plugins, run_plugin_exit_hooks};
+use crate::settings::Settings;
 
 use futures::prelude::*;
 use futures::sync::mpsc;
 use tokio_core::net::TcpListener;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Handle};
 use tokio_io::AsyncRead;
 use tokio_io::io::{lines, write_all};
 use tokio_signal;
 
-/// Creates a listener for Unix signals that takes care of flushing all stores to file before
-/// shutting down the server.
-fn create_signal_handler(
-    mut state: ThreadState<'static, 'static>
-) -> impl Future<Item=(), Error=()> {
+#[cfg(unix)]
+fn enable_platform_hook(
+    handle: &Handle,
+    global: Global,
+    store: HashMapStore<'static>) {
+    let (subscriptions_tx, _) = mpsc::unbounded::<Update>();
+    let mut state = ThreadState::new(global, store, subscriptions_tx);
+
+    // Creates a listener for Unix signals that takes care of flushing all stores to file before
+    // shutting down the server.
     // Catches `TERM` signals, which are sent by Kubernetes during graceful shutdown.
-    tokio_signal::unix::Signal::new(15)
+    let signal_handler = tokio_signal::unix::Signal::new(15)
         .flatten_stream()
         .for_each(move |signal| {
             println!("Signal: {}", signal);
             info!("`TERM` signal recieved; flushing all stores...");
+            info!("All stores flushed; calling plugin exit hooks...");
+            run_plugin_exit_hooks(&state);
+            info!("Plugin exit hooks called; exiting...");
             state.flushall();
-            info!("All stores flushed; exiting...");
             exit(0);
 
             #[allow(unreachable_code)]
             Ok(())
         })
-        .map_err(|err| error!("Error in signal handler future: {:?}", err))
+        .map_err(|err| error!("Error in signal handler future: {:?}", err));
+
+    handle.spawn(signal_handler);
+}
+
+#[cfg(windows)]
+fn enable_platform_hook<'a>(
+    handle: &Handle,
+    global: Global,
+    store: HashMapStore<'a>
+) {
 }
 
 pub fn run_server(host: &str, port: &str, settings: &Settings) {
     let addr = format!("{}:{}", host, port);
-    let addr = addr.parse::<SocketAddr>().unwrap();
+    let addr: SocketAddr = addr.parse().expect("Invalid host or port provided!");
 
     info!("Trying to bind to addr: {}", addr);
     if !settings.autoflush {
@@ -81,15 +98,7 @@ pub fn run_server(host: &str, port: &str, settings: &Settings) {
     let global = Arc::new(RwLock::new(SharedState::new(settings.clone())));
     let store = Arc::new(RwLock::new(HashMap::new()));
 
-    // initialize the signal handler
-    let (subscriptions_tx, _) = mpsc::unbounded::<Update>();
-    let signal_handler_threadstate = ThreadState::new(
-        Arc::clone(&global),
-        Arc::clone(&store),
-        subscriptions_tx
-    );
-    let signal_handler = create_signal_handler(signal_handler_threadstate);
-    handle.spawn(signal_handler);
+    enable_platform_hook(&handle, Arc::clone(&global), Arc::clone(&store));
 
     run_plugins(global.clone());
 
@@ -105,16 +114,13 @@ pub fn run_server(host: &str, port: &str, settings: &Settings) {
         ));
         let state_clone = state.clone();
 
-        match utils::init_dbs(&mut state.borrow_mut()) {
-            Ok(()) => (),
-            Err(_) => panic!("Cannot initialized db!"),
-        };
+        utils::init_dbs(&mut state.borrow_mut());
         on_connect(&global_copy);
 
         // map incoming subscription updates to the same format as regular
         // responses so they can be processed in the same manner.
         let subscriptions = subscriptions_rx.map(|message| (
-            Cow::from(""), ReturnType::string(vec![message].into_json())
+            Cow::from(""), ReturnType::string(vec![message].as_json())
         ));
 
         let (rdr, wtr) = socket.split();

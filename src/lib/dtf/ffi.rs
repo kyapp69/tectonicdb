@@ -2,12 +2,21 @@ extern crate libc;
 
 use std::{mem, slice, ptr};
 use std::ffi::{CStr, CString};
-use std::path::Path;
 
-use csv::{DeserializeRecordsIntoIter, ReaderBuilder};
-use dtf::{self, Update, UpdateVecInto};
+use crate::dtf::{
+    update::{
+        Update,
+        UpdateVecConvert
+    },
+    file_format::{
+        decode,
+        decode_buffer,
+    },
+};
+use crate::storage::filetype::parse_kaiko_csv_to_dtf_inner;
 use self::libc::{c_char, c_uchar};
 
+/// struct containting a pointer to an array of `Update` and length of slice
 #[repr(C)]
 pub struct Slice {
     ptr: *mut Update,
@@ -20,6 +29,8 @@ unsafe fn ptr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, ()> {
     CStr::from_ptr(ptr).to_str().map_err(|_| ())
 }
 
+/// Convert all the `Update`s in DTF file to CSV
+///     returns a C char pointer
 #[no_mangle]
 pub extern fn read_dtf_to_csv(fname: *const c_char) -> *mut c_char {
     let c_str = unsafe {
@@ -28,14 +39,16 @@ pub extern fn read_dtf_to_csv(fname: *const c_char) -> *mut c_char {
     };
     let fname = c_str.to_str().unwrap();
 
-    let ups = dtf::decode(fname, None).unwrap();
-    let data = ups.into_csv();
+    let ups = decode(fname, None).unwrap();
+    let data = ups.as_csv();
 
     let ret = String::from(data);
     let c_str_song = CString::new(ret).unwrap();
     c_str_song.into_raw()
 }
 
+/// Convert at most `num` `Update`s in DTF file to CSV
+///     returns a C char pointer
 #[no_mangle]
 pub extern fn read_dtf_to_csv_with_limit(fname: *const c_char, num: u32) -> *mut c_char {
     let c_str = unsafe {
@@ -44,14 +57,16 @@ pub extern fn read_dtf_to_csv_with_limit(fname: *const c_char, num: u32) -> *mut
     };
     let fname = c_str.to_str().unwrap();
 
-    let ups = dtf::decode(fname, Some(num)).unwrap();
-    let data = ups.into_csv();
+    let ups = decode(fname, Some(num)).unwrap();
+    let data = ups.as_csv();
 
     let ret = String::from(data);
     let c_str_song = CString::new(ret).unwrap();
     c_str_song.into_raw()
 }
 
+/// Convert all the Updates in DTF file to an array
+///     returns a Slice
 #[no_mangle]
 pub extern fn read_dtf_to_arr(fname: *const c_char) -> Slice {
     let c_str = unsafe {
@@ -60,7 +75,7 @@ pub extern fn read_dtf_to_arr(fname: *const c_char) -> Slice {
     };
     let fname = c_str.to_str().unwrap();
 
-    let mut ups = dtf::decode(fname, None).unwrap();
+    let mut ups = decode(fname, None).unwrap();
 
     let p = ups.as_mut_ptr();
     let len = ups.len();
@@ -71,6 +86,8 @@ pub extern fn read_dtf_to_arr(fname: *const c_char) -> Slice {
     Slice { ptr: p, len: len }
 }
 
+/// Convert at most `num` Updates in DTF file to an array
+///     returns a Slice
 #[no_mangle]
 pub extern fn read_dtf_to_arr_with_limit(fname: *const c_char, num: u32) -> Slice {
     let c_str = unsafe {
@@ -79,7 +96,7 @@ pub extern fn read_dtf_to_arr_with_limit(fname: *const c_char, num: u32) -> Slic
     };
     let fname = c_str.to_str().unwrap();
 
-    let mut ups = dtf::decode(fname, Some(num)).unwrap();
+    let mut ups = decode(fname, Some(num)).unwrap();
 
     let p = ups.as_mut_ptr();
     let len = ups.len();
@@ -90,65 +107,9 @@ pub extern fn read_dtf_to_arr_with_limit(fname: *const c_char, num: u32) -> Slic
     Slice { ptr: p, len: len }
 }
 
-/// ```csv
-/// id,exchange,symbol,date,price,amount,sell
-/// 109797481,be,dashbtc,1498694478000,0.07154,0.40495999,false
-/// ```
-#[derive(Deserialize)]
-struct KaikoCsvEntry {
-    pub id: String,
-    pub exchange: String,
-    pub symbol: String,
-    pub date: u64,
-    pub price: f32,
-    pub amount: f32,
-    pub sell: Option<bool>,
-}
 
-impl Into<Update> for KaikoCsvEntry {
-    fn into(self) -> Update {
-        Update {
-            ts: self.date,
-            seq: self.id.parse().unwrap_or(0),
-            is_trade: true,
-            is_bid: !self.sell.unwrap_or(false),
-            price: self.price,
-            size: self.amount,
-        }
-    }
-}
-
-fn parse_kaiko_csv_to_dtf_inner(symbol: &str, filename: &str, csv_str: &str) -> Option<String> {
-    let csv_reader = ReaderBuilder::new()
-        .has_headers(true)
-        .from_reader(csv_str.as_bytes());
-
-    // Parse the full CSV into a vector of `KaikoCsvEntry`s and make into `Update`s
-    let iter: DeserializeRecordsIntoIter<_, KaikoCsvEntry> = csv_reader.into_deserialize();
-    let size_hint = iter.size_hint().0;
-    let mut updates: Vec<Update> = Vec::with_capacity(size_hint);
-
-    for kaiko_entry_res in iter {
-        match kaiko_entry_res {
-            Ok(kaiko_entry) => updates.push(kaiko_entry.into()),
-            Err(err) => { return Some(format!("{:?}", err)); }
-        }
-    }
-
-    // Write or append the updates into the target DTF file
-    let fpath = Path::new(&filename);
-    let res = if fpath.exists() {
-        dtf::append(filename, &updates)
-    } else {
-        dtf::encode(filename, symbol, &updates)
-    };
-
-    match res {
-        Ok(_) => None,
-        Err(err) => Some(format!("Error writing DTF to output file: {:?}", err)),
-    }
-}
-
+/// This is for converting kaiko csv data into DTF.
+///
 /// Given an output filename and a string containing input CSV to parse, parses the CSV into DTF and
 /// writes it to the output file.  If the file exists, the data will be appended.
 ///
@@ -179,6 +140,7 @@ pub unsafe extern "C" fn parse_kaiko_csv_to_dtf(
     }
 }
 
+/// decode a buffer of size `len` to Slice
 #[no_mangle]
 pub extern fn parse_stream(n: *mut c_uchar, len: u32) -> Slice {
     let mut byte_arr = unsafe {
@@ -186,7 +148,7 @@ pub extern fn parse_stream(n: *mut c_uchar, len: u32) -> Slice {
         slice::from_raw_parts(n, len as usize)
     };
 
-    let mut v = dtf::decode_buffer(&mut byte_arr);
+    let mut v = decode_buffer(&mut byte_arr);
 
     let p = v.as_mut_ptr();
     let len = v.len();
@@ -194,6 +156,7 @@ pub extern fn parse_stream(n: *mut c_uchar, len: u32) -> Slice {
     Slice { ptr: p, len: len }
 }
 
+/// free a c string
 #[no_mangle]
 pub extern fn str_free(s: *mut c_char) {
     unsafe {

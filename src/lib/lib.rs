@@ -1,6 +1,10 @@
+//! libtectonic is a financial data storage library
+#![deny(missing_docs)]
 #![feature(libc)]
+#![feature(rustc_private)]
 
 extern crate csv;
+extern crate indexmap;
 extern crate serde;
 extern crate serde_json;
 #[macro_use]
@@ -13,11 +17,13 @@ extern crate bitflags;
 #[macro_use]
 extern crate log;
 
+/// functions for histogram, event analytics
 pub mod postprocessing;
+/// data structures that describe data storage
 pub mod storage;
+/// helper functions
 pub mod utils;
+/// DTF(Dense Tick Format) implmentation
 pub mod dtf;
+/// Rust tectonicdb client
 pub mod client;
-
-pub use dtf::update::Update;
-pub use utils::*;

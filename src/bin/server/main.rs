@@ -1,4 +1,4 @@
-#![feature(box_syntax, box_patterns, entry_and_modify)]
+#![feature(box_syntax, box_patterns)]
 
 extern crate libtectonic;
 extern crate clap;
@@ -9,6 +9,8 @@ extern crate time;
 #[macro_use]
 extern crate serde_derive;
 extern crate openssl_probe;
+#[macro_use]
+extern crate lazy_static;
 
 #[macro_use]
 extern crate log;
@@ -34,7 +36,7 @@ mod subscription;
 
 use clap::{Arg, App, ArgMatches};
 
-use settings::{key_or_default, key_or_none};
+use self::settings::{key_or_default, key_or_none};
 
 fn main() {
     // Help detect OpenSSL certificates on Alpine Linux

@@ -1,16 +1,15 @@
-use db::TectonicError;
 use std::net::TcpStream;
 use std::io::{Read, Write};
 use byteorder::{BigEndian, /*WriteBytesExt, */ ReadBytesExt};
-use db::insert_command::InsertCommand;
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, RwLock, Mutex};
 use std::thread;
 use std::time;
-
-
-use dtf::{self, UpdateVecInto};
 use std::str;
+
+use crate::db::TectonicError;
+use crate::db::insert_command::InsertCommand;
+use crate::dtf::{update::UpdateVecConvert, file_format::decode_buffer};
 
 
 struct CxnStream {
@@ -36,8 +35,8 @@ impl CxnStream {
             let _ = self.stream.read_exact(&mut buf);
 
             let mut buf = buf.as_slice();
-            let v = dtf::decode_buffer(&mut buf);
-            Ok(format!("[{}]\n", v.into_json()))
+            let v = decode_buffer(&mut buf);
+            Ok(format!("[{}]\n", v.as_json()))
 
         } else {
             let size = self.stream.read_u64::<BigEndian>().unwrap();

@@ -1,10 +1,8 @@
+/// implementation of the DTF file format
 pub mod file_format;
-pub use dtf::file_format::*;
-
+/// Represents a single row of orderbook update
 pub mod update;
-pub use dtf::update::*;
-
+/// Financial symbol
 pub mod symbol;
-pub use dtf::symbol::*;
-
+/// C FFI structs and functions
 pub mod ffi;

@@ -5,22 +5,20 @@ macro_rules! catch {
 }
 
 use circular_queue::CircularQueue;
-
-use libtectonic::dtf::{self, UpdateVecInto};
-use libtectonic::dtf::update::Update;
+use futures;
+use libtectonic::dtf::{self, update::{Update, UpdateVecConvert}};
 use libtectonic::storage::utils::scan_files_for_range;
 use libtectonic::utils::within_range;
 
 use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
-use utils;
 use std::path::Path;
-use settings::Settings;
 use std::sync::{Arc, RwLock, Mutex, mpsc};
 use std::time::{SystemTime, UNIX_EPOCH};
-use handler::{GetFormat, ReturnType, ReqCount, Loc, Range};
-use subscription::Subscriptions;
-use futures;
+use crate::utils;
+use crate::settings::Settings;
+use crate::handler::{GetFormat, ReturnType, ReqCount, Loc, Range};
+use crate::subscription::Subscriptions;
 
 /// An atomic reference counter for accessing shared data.
 pub type Global = Arc<RwLock<SharedState>>;
@@ -43,7 +41,7 @@ pub type SubscriptionTX = futures::sync::mpsc::UnboundedSender<Update>;
 ///
 /// When client adds some updates using ADD or BULKADD,
 /// size increments and updates are added to memory
-/// finally, call FLUSH to commit to disk the current store or FLUSHALL to commit all available stores.
+/// finally, call FLUSH to commit to disk the current store or FLUSH ALL to commit all available stores.
 /// the client can free the updates from memory using CLEAR or CLEARALL
 ///
 #[derive(Debug)]
@@ -134,9 +132,9 @@ impl<'a> Store<'a> {
 
             let fpath = Path::new(&fullfname);
             let result = if fpath.exists() {
-                dtf::append(&fullfname, &vecs.0)
+                dtf::file_format::append(&fullfname, &vecs.0)
             } else {
-                dtf::encode(&fullfname, &self.name, &vecs.0)
+                dtf::file_format::encode(&fullfname, &self.name, &vecs.0)
             };
             match result {
                 Ok(_) => info!("Successfully flushed."),
@@ -163,7 +161,7 @@ impl<'a> Store<'a> {
             //     warn!("There are more items in memory than in file. Cannot load from file.");
             //     return;
             // }
-            let ups = dtf::decode(&fname, None);
+            let ups = dtf::file_format::decode(&fname, None);
             if ups.is_err() {
                 error!("Unable to decode file during load!");
                 return;
@@ -186,7 +184,7 @@ impl<'a> Store<'a> {
             let rdr = self.global.read().unwrap();
             let folder = rdr.settings.dtf_folder.to_owned();
             let fname = format!("{}/{}.dtf", &folder, self.name);
-            dtf::get_size(&fname)
+            dtf::file_format::get_size(&fname)
         };
         match header_size {
             Ok(header_size) => {
@@ -612,17 +610,17 @@ impl<'thr, 'store> ThreadState<'thr, 'store> {
         let ret = match format {
             GetFormat::Dtf => {
                 let mut bytes: Vec<u8> = Vec::new();
-                let _ = dtf::write_batches(&mut bytes, &result);
+                let _ = dtf::file_format::write_batches(&mut bytes, &result);
                 ReturnType::Bytes(bytes)
             }
             GetFormat::Json => {
                 ReturnType::String(
-                    Cow::Owned(format!("[{}]\n", result.into_json()))
+                    Cow::Owned(format!("[{}]\n", result.as_json()))
                 )
             }
             GetFormat::Csv => {
                 ReturnType::String(
-                    Cow::Owned(format!("{}\n", result.into_csv())),
+                    Cow::Owned(format!("{}\n", result.as_csv())),
                 )
             }
         };

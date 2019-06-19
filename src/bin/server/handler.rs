@@ -1,6 +1,6 @@
-use state::*;
-use parser;
-use libtectonic::dtf::{UpdateVecInto, Update};
+use crate::state::*;
+use crate::parser;
+use libtectonic::dtf::update::{UpdateVecConvert, Update};
 use std::borrow::{Cow, Borrow};
 
 // BUG: subscribe, add, deadlock!!!
@@ -77,7 +77,7 @@ enum Command<'a> {
 static HELP_STR: &str = "PING, INFO, USE [db], CREATE [db],
 ADD [ts],[seq],[is_trade],[is_bid],[price],[size];
 BULKADD ...; DDAKLUB
-FLUSH, FLUSHALL, GETALL, GET [count], CLEAR
+FLUSH, FLUSH ALL, GET ALL, GET [count], CLEAR
 ";
 
 /// sometimes returns string, sometimes bytes, error string
@@ -104,7 +104,7 @@ pub fn gen_response<'a: 'b, 'b, 'c>(line: &'b str,
         "DDAKLUB" => BulkAddEnd,
         "UNSUBSCRIBE" => Unsubscribe(ReqCount::Count(0)),
         "UNSUBSCRIBE ALL" => Unsubscribe(ReqCount::All),
-        "COUNT" => Count(ReqCount::Count(1), Loc::Fs), 
+        "COUNT" => Count(ReqCount::Count(1), Loc::Fs),
         "COUNT ALL" => Count(ReqCount::All, Loc::Fs),
         "COUNT ALL IN MEM" => Count(ReqCount::All, Loc::Mem),
         "CLEAR" => Clear(ReqCount::Count(1)),
@@ -255,7 +255,7 @@ pub fn gen_response<'a: 'b, 'b, 'c>(line: &'b str,
             let rxlocked = state.rx.clone().unwrap();
             let message = rxlocked.lock().unwrap().try_recv();
             match message {
-                Ok(msg) => ReturnType::string(vec![msg].into_json()),
+                Ok(msg) => ReturnType::string(vec![msg].as_json()),
                 _ => ReturnType::string("NONE"),
             }
         }
@@ -285,7 +285,7 @@ pub fn gen_response<'a: 'b, 'b, 'c>(line: &'b str,
             }
         }
 
-        Get(cnt, fmt, rng, loc) => 
+        Get(cnt, fmt, rng, loc) =>
             state.get(cnt, fmt, rng, loc)
             .unwrap_or(ReturnType::error("Not enough items to return")),
 
@@ -296,7 +296,7 @@ pub fn gen_response<'a: 'b, 'b, 'c>(line: &'b str,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use settings::Settings;
+    use crate::settings::Settings;
     use std::sync::{Arc, RwLock};
     use std::collections::HashMap;
     use futures;
